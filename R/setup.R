@@ -10,6 +10,8 @@ pacman::p_load(tidyverse,
                lubridate,
                countrycode,
                patchwork,
+               latex2exp,
+               bayesplot,
                brms,
                here)
 
