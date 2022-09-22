@@ -30,6 +30,12 @@ if(FALSE)
   )
   
   # plot NPI coefficients
-  plot_npi_coefficients(model)
+  plot_npi_coefficients(model, resp_names = c("log~ED", "Delta~GDP","Delta~Transit", "log~R"))
+  
+  # plot VAR coefficients
+  plot_var_coefficients(model, panel_label = "Panel A")
+  
+  # mcmc diagnostic plots
+  mcmc_rhat_hist(rhat(model$models)) + mcmc_neff_hist(neff_ratio(model$models), size = 3)
 }
 
