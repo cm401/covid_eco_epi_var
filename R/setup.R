@@ -22,6 +22,7 @@ here()
 source( paste0(here(),"/R/utility_functions.R" ) )
 source( paste0(here(),"/R/data_functions.R" ) )
 source( paste0(here(),"/R/model_functions.R" ) )
+source( paste0(here(),"/R/plot_functions.R" ) )
 
 # load data
 covid_data_weekly <- create_weekly_dataset()
