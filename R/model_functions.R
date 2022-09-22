@@ -36,7 +36,7 @@ brm_VAR <- function(
                                 prior(lkj(2), class = cor)), 
     panel_id                = "CountryName",
     interaction_term        = "",
-    group_by_variant        = TRUE,
+    group_by_variant        = FALSE,
     variants                = c("1_wildtype", "2_alpha", "3_delta"),
     no_population_intercept = FALSE,
     save_to_file            = NA,      #provide file name here
