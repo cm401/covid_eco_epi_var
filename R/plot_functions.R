@@ -2,7 +2,6 @@
 
 plot_npi_coefficients <- function(model, resp_names = c("log~ED", "Delta~GDP","Delta~Transit", "log~R") )
 {
-  
   hypothesis_model <- as_tibble(hypothesis(model$models, paste(rownames(fixef(model$models)), "> 0"),class='b')$hypothesis)
   
   npi_results_plt  <- hypothesis_model %>% # need to create Latex table from this
@@ -52,4 +51,39 @@ plot_npi_coefficients <- function(model, resp_names = c("log~ED", "Delta~GDP","D
     ylab("Non Pharmaceutical Intervention") + xlab("")  # 1000 x 800
   
   return( plot )
+}
+
+plot_var_coefficients <- function(model, panel_label = "Panel A")
+{
+  hypothesis_model <- as_tibble(hypothesis(model$models, paste(rownames(fixef(model$models)), "> 0"),class='b')$hypothesis)
+
+  var_results_plt  <- hypothesis_model %>% # need to create Latex table from this
+    mutate( Hypothesis = str_remove(Hypothesis,"[(]"),
+            Hypothesis = str_remove(Hypothesis,"[)] > 0")) %>%                    # use subtables
+    dplyr::select(-c(Evid.Ratio, Post.Prob,Star)) %>%
+    dplyr::rename(variable=Hypothesis) %>%
+    filter(!str_ends(variable,"Intercept")& str_ends(variable,"l1")) %>%
+    mutate(Level  = if_else(str_detect(variable,"L_")==TRUE,"NPI~Level","NPI~Change"),
+           resp_y = paste0(stringr::str_split(variable, "_") %>% map_chr(., 2),stringr::str_split(variable, "_") %>% map_chr(., 3)),
+           resp   = stringr::str_split(variable, "_") %>% map_chr(., 1)) 
+  
+  var_results_plt$resp <- as.factor(var_results_plt$resp)
+  levels(var_results_plt$resp) <- c("log~ED", "Delta~GDP","Delta~Transit", "log~R")
+  
+  var_results_plt <- var_results_plt %>% mutate(col=case_when(CI.Upper < 0 ~ "red",
+                                                              CI.Lower > 0 ~ "blue",
+                                                              CI.Upper > 0 & CI.Lower <0 ~ "black"),
+                                                label  = paste( "$ ", str_replace(resp,"~"," "), ", ", str_replace(resp_y,"~"," "), " \\_lag 1 $")) 
+  
+  plot <- var_results_plt %>% 
+    ggplot(aes(y=reorder(label,-desc(Estimate)),x=Estimate,xmin = CI.Lower, xmax = CI.Upper,col=col)) + geom_pointinterval() + 
+    geom_vline(aes(xintercept=0),linetype="dashed") +
+    theme(legend.position = "none" ) +
+    scale_color_manual(values = c("red" = "red",
+                                  "blue"="blue",
+                                  "black"="black")) +
+    scale_y_discrete(labels = TeX(var_results_plt$label)) + 
+    ylab("") + xlab("") + ggtitle(panel_label)
+  
+  return(plot)
 }
