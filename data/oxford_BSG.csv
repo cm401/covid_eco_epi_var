@@ -1,0 +1,25 @@
+﻿Codebook,policy_code,Category,data_label,policy_name
+C1_School closing,C1,C,C1_combined_numeric,School closing
+C2_Workplace closing,C2,C,C2_combined_numeric,Workplace closing
+C3_Cancel public events,C3,C,C3_combined_numeric,Cancel public events
+C4_Restrictions on gatherings,C4,C,C4_combined_numeric,Restrictions on gatherings
+C5_Close public transport,C5,C,C5_combined_numeric,Close public transport
+C6_Stay at home requirements,C6,C,C6_combined_numeric,Stay at home requirements
+C7_Restrictions on internal movement,C7,C,C7_combined_numeric,Restrictions on internal movement
+C8_International travel controls,C8,C,C8_combined_numeric,International travel controls
+E1_Income support ,E1,E,E1_combined_numeric,Income support 
+E2_Debt/contract relief ,E2,E,E2_combined_numeric,Debt/contract relief 
+E3_Fiscal measures,E3,E,E3_combined_numeric,Fiscal measures
+E4_International support,E4,E,E4_combined_numeric,International support
+H1_Public information campaigns,H1,H,H1_combined_numeric,Public information campaigns
+H2_Testing policy,H2,H,H2_combined_numeric,Testing policy
+H3_Contact tracing,H3,H,H3_combined_numeric,Contact tracing
+H4_Emergency investment in healthcare,H4,H,H4_combined_numeric,Emergency investment in healthcare
+H5_Investment in vaccines,H5,H,H5_combined_numeric,Investment in vaccines
+H6_Facial Coverings,H6,H,H6_combined_numeric,Facial Coverings
+H7_Vaccination Policy,H7,H,H7_combined_numeric,Vaccination Policy
+H8_Protection of elderly people,H8,H,H8_combined_numeric,Protection of elderly people
+V1_Vaccine Prioritisation,V1,V,V1_combined_numeric,Vaccine Prioritisation
+V2_Vaccine eligibility availability,V2,V,V2_combined_numeric,Vaccine eligibility/availability
+V3_Vaccine financial support,V3,V,V3_combined_numeric,Vaccine financial support
+V4_Vaccine requirement mandate,V4,V,V4_combined_numeric,Vaccine requirement/mandate
