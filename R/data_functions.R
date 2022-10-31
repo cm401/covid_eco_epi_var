@@ -15,7 +15,7 @@ create_weekly_dataset <- function(file_name='/data/covid_eu_data.rds')
   # join face to face sector group data
   covid_data <- covid_data %>% left_join(face2face_group,by=c("CountryCode")) %>% 
     group_by(CountryName) %>% arrange(Date) %>%
-    fill(starts_with("SARS_CoV_2_")) %>%
+    fill(starts_with("SARS_CoV_2_")|ends_with("_variant")) %>%
     fill(population,total_vaccinations) %>%
     ungroup()
   

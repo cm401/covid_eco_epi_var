@@ -23,10 +23,11 @@ if(FALSE)
                                            prior(cauchy(0,2),class=sd,resp=logR),
                                            prior(lkj(2), class = rescor)),
                    panel_id            = "CountryName",
+                   group_by_variant    = FALSE,
                    iterations          = 4000,
                    no_population_intercept = TRUE,
                    control             = list(adapt_delta = 0.9, step_size = 0.01, max_treedepth = 10),
-                   interaction_term    = "vaccination_doses_per_person:SARS_CoV_2_Dominant_Variant + SARS_CoV_2_Dominant_Variant"
+                   interaction_term    = "vaccination_doses_per_person + WT_variant + Alpha_variant + Delta_variant + Omicron_variant",
   )
   
   # plot NPI coefficients

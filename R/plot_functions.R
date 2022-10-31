@@ -2,14 +2,14 @@
 
 plot_npi_coefficients <- function(model, resp_names = c("log~ED", "Delta~GDP","Delta~Transit", "log~R") )
 {
-  hypothesis_model <- as_tibble(hypothesis(model$models, paste(rownames(fixef(model$models)), "> 0"),class='b')$hypothesis)
+  hypothesis_model <- as_tibble(hypothesis(model$models, paste(rownames(fixef(model$models)), "= 0"),class='b',alpha=0.05)$hypothesis)
   
   npi_results_plt  <- hypothesis_model %>% # need to create Latex table from this
     mutate( Hypothesis = str_remove(Hypothesis,"[(]"),
-            Hypothesis = str_remove(Hypothesis,"[)] > 0")) %>%                    # use subtables
+            Hypothesis = str_remove(Hypothesis,"[)] = 0")) %>%                    # use subtables
     dplyr::select(-c(Evid.Ratio, Post.Prob,Star)) %>%
     dplyr::rename(variable=Hypothesis) %>%
-    filter(!str_ends(variable,"Intercept")&!str_ends(variable,"l1")&!str_detect(variable,"SARS_C")) %>%
+    filter(!str_ends(variable,"Intercept")&!str_ends(variable,"l1")&!str_detect(variable,"SARS_C")&!str_detect(variable,"variant")&!str_detect(variable,"doses")) %>%
     mutate(Level = if_else(str_detect(variable,"L_")==TRUE,"NPI~Level","NPI~Change"),
            NPI   = stringr::str_split(variable, "_") %>% map_chr(., 3),
            resp  = stringr::str_split(variable, "_") %>% map_chr(., 1)) 
@@ -20,8 +20,8 @@ plot_npi_coefficients <- function(model, resp_names = c("log~ED", "Delta~GDP","D
   plot <- npi_results_plt %>%
     mutate(NPI=replace(NPI,NPI=="C1","Schools Closing"),
            NPI=replace(NPI,NPI=="C1L","Schools Closing"),
-           NPI=replace(NPI,NPI=="C2","Workplace closing"),
-           NPI=replace(NPI,NPI=="C2L","Workplace closing"),
+           NPI=replace(NPI,NPI=="C2","Workplace closure"),
+           NPI=replace(NPI,NPI=="C2L","Workplace closure"),
            NPI=replace(NPI,NPI=="C4","Restrictions on gatherings"),
            NPI=replace(NPI,NPI=="C4L","Restrictions on gatherings"),
            NPI=replace(NPI,NPI=="C5","Close public transport"),
@@ -53,13 +53,13 @@ plot_npi_coefficients <- function(model, resp_names = c("log~ED", "Delta~GDP","D
   return( plot )
 }
 
-plot_var_coefficients <- function(model, panel_label = "Panel A")
+plot_var_coefficients <- function(model, panel_label = "A.")
 {
-  hypothesis_model <- as_tibble(hypothesis(model$models, paste(rownames(fixef(model$models)), "> 0"),class='b')$hypothesis)
-
+  hypothesis_model <- as_tibble(hypothesis(model$models, paste(rownames(fixef(model$models)), "= 0"),class='b',alpha=0.05)$hypothesis)
+  
   var_results_plt  <- hypothesis_model %>% # need to create Latex table from this
     mutate( Hypothesis = str_remove(Hypothesis,"[(]"),
-            Hypothesis = str_remove(Hypothesis,"[)] > 0")) %>%                    # use subtables
+            Hypothesis = str_remove(Hypothesis,"[)] = 0")) %>%                    # use subtables
     dplyr::select(-c(Evid.Ratio, Post.Prob,Star)) %>%
     dplyr::rename(variable=Hypothesis) %>%
     filter(!str_ends(variable,"Intercept")& str_ends(variable,"l1")) %>%
@@ -69,6 +69,8 @@ plot_var_coefficients <- function(model, panel_label = "Panel A")
   
   var_results_plt$resp <- as.factor(var_results_plt$resp)
   levels(var_results_plt$resp) <- c("log~ED", "Delta~GDP","Delta~Transit", "log~R")
+  var_results_plt$resp_y <- as.factor(var_results_plt$resp_y)
+  levels(var_results_plt$resp_y) <- c("log~ED", "Delta~GDP","Delta~Transit", "log~R")
   
   var_results_plt <- var_results_plt %>% mutate(col=case_when(CI.Upper < 0 ~ "red",
                                                               CI.Lower > 0 ~ "blue",
