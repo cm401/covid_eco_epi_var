@@ -37,8 +37,8 @@ if(FALSE)
   plot_var_coefficients(model, panel_label = "A.")
   
   # plot generalized impulse response function
-  irf_calced <- compute_irf_from_draws(model$models,1,lag=12)
-  irf_calced$girf_plot + scale_x_continuous(breaks = seq(4, 12, by = 4)) + 
+  irf_calced <- compute_irf_mcmc(model$models,1,lag=12,facet_scales = "free", plot_labels = c("log~R","log~ED","Delta~GDP","Delta~Transit"),level_order = c("logR","ecoed","fdGDP","fdtransit"))
+  irf_calced$oirf_plot + scale_x_continuous(breaks = seq(4, 12, by = 4)) + 
     theme(strip.background=element_rect(fill="#CCFFFF"), strip.text=element_text(color="black")) + 
     ggtitle("B.")
   
