@@ -13,7 +13,9 @@ pacman::p_load(tidyverse,
                latex2exp,
                bayesplot,
                brms,
-               here)
+               here,
+               zoo,
+               MASS)
 
 # initialize here functionality 
 here()
