@@ -6,7 +6,7 @@ create_weekly_dataset <- function(file_name='/data/covid_eu_data.rds')
   covid_data <- readRDS(paste0(here(),file_name))
   NPI_schema <- read_csv(paste0(here(),"/data/oxford_BSG.csv"))
   
-  # create face 2 face sector group 
+  # create face to face sector group
   face2face_group <- covid_data %>% dplyr::select(CountryCode,f2f_yes) %>% 
     filter(!is.na(f2f_yes)) %>% unique() %>% group_by(CountryCode) %>% 
     summarise(face2face_mean = mean(f2f_yes)) %>% 
@@ -24,21 +24,23 @@ create_weekly_dataset <- function(file_name='/data/covid_eu_data.rds')
   covid_data <- covid_data %>% group_by(CountryName) %>% fill(f2f_yes) %>% 
     fill(estimated_daily_excess_deaths_per_100k) %>%
     mutate(
-      lvl_C1L_lag = dplyr::lag(C1_combined_numeric,NPI_lag),
-      lvl_C2L_lag = dplyr::lag(C2_combined_numeric,NPI_lag),
-      lvl_C3L_lag = dplyr::lag(C3_combined_numeric,NPI_lag),
-      lvl_C4L_lag = dplyr::lag(C4_combined_numeric,NPI_lag),
-      lvl_C5L_lag = dplyr::lag(C5_combined_numeric,NPI_lag),
-      lvl_C6L_lag = dplyr::lag(C6_combined_numeric,NPI_lag),
-      lvl_C7L_lag = dplyr::lag(C7_combined_numeric,NPI_lag),
-      lvl_C8L_lag = dplyr::lag(C8_combined_numeric,NPI_lag),
-      lvl_H1L_lag = dplyr::lag(H1_combined_numeric,NPI_lag),
-      lvl_H2L_lag = dplyr::lag(H2_combined_numeric,NPI_lag),
-      lvl_H3L_lag = dplyr::lag(H3_combined_numeric,NPI_lag),
-      lvl_H6L_lag = dplyr::lag(H6_combined_numeric,NPI_lag),
-      lvl_H8L_lag = dplyr::lag(H8_combined_numeric,NPI_lag),
-      lvl_E1L_lag = dplyr::lag(E1_combined_numeric,NPI_lag),
-      lvl_E2L_lag = dplyr::lag(E2_combined_numeric,NPI_lag)
+      `transit stations` = rollapply(`transit stations`,width=7,mean,align="right",fill=NA),     # 7 day moving average of transit mobility
+      workplaces         = rollapply(workplaces,width=7,mean,align="right",fill=NA),             # 7 day moving average of workplace mobility
+      lvl_C1L_lag = dplyr::lag(C1_combined_numeric,5),
+      lvl_C2L_lag = dplyr::lag(C2_combined_numeric,5),
+      lvl_C3L_lag = dplyr::lag(C3_combined_numeric,5),
+      lvl_C4L_lag = dplyr::lag(C4_combined_numeric,5),
+      lvl_C5L_lag = dplyr::lag(C5_combined_numeric,5),
+      lvl_C6L_lag = dplyr::lag(C6_combined_numeric,5),
+      lvl_C7L_lag = dplyr::lag(C7_combined_numeric,5),
+      lvl_C8L_lag = dplyr::lag(C8_combined_numeric,5),
+      lvl_H1L_lag = dplyr::lag(H1_combined_numeric,5),
+      lvl_H2L_lag = dplyr::lag(H2_combined_numeric,5),
+      lvl_H3L_lag = dplyr::lag(H3_combined_numeric,5),
+      lvl_H6L_lag = dplyr::lag(H6_combined_numeric,5),
+      lvl_H8L_lag = dplyr::lag(H8_combined_numeric,5),
+      lvl_E1L_lag = dplyr::lag(E1_combined_numeric,5),
+      lvl_E2L_lag = dplyr::lag(E2_combined_numeric,5)
     ) %>% ungroup()
   
   # add PCA of NPIs
@@ -58,14 +60,16 @@ create_weekly_dataset <- function(file_name='/data/covid_eu_data.rds')
     fill(IC_median_ensamble_si_2_rt,f2f_yes,Region_v3) %>% filter(!is.na(`Tracker (counterfactual)`)) %>%
     mutate( 
       centre_R      = R - 1, 
-      log_R         = log(lshtm_rt_median),
+      log_R         = log(lshtm_rt_median),#log(IC_median_ensamble_si_2_rt), 
       fd_log_R      = log_R - dplyr::lag(log_R,1),
-      fd_GDP        = (`Tracker (level)` - dplyr::lag(`Tracker (level)`,1) - prepandemic_trend_growth)/10,
+      fd_GDP        = (`Tracker (level)` - dplyr::lag(`Tracker (level)`,1) - prepandemic_trend_growth)/10,#,(`Tracker (counterfactual)` - dplyr::lag(`Tracker (counterfactual)`,1))/10,
+      fd_GDPpure    = (`Tracker (level)` - dplyr::lag(`Tracker (level)`,1))/10,
       fd_GDP_l1     = dplyr::lag(fd_GDP,1),
       fd_GDP_l2     = dplyr::lag(fd_GDP,2),
       fd_GDP_l3     = dplyr::lag(fd_GDP,3),
       fd_GDP_l4     = dplyr::lag(fd_GDP,4),
       fd_GDP_l5     = dplyr::lag(fd_GDP,5),
+      fd_GDPpure_l1 = dplyr::lag(fd_GDPpure,1),
       eco_ed_raw    = log(estimated_daily_excess_deaths_per_100k+1),
       eco_ed        = dplyr::lead(eco_ed_raw,3), # economist excess deaths
       eco_ed_l1     = dplyr::lead(eco_ed_raw,2), # economist excess deaths
@@ -73,6 +77,15 @@ create_weekly_dataset <- function(file_name='/data/covid_eu_data.rds')
       eco_ed_l3     = eco_ed_raw, # economist excess deaths
       eco_ed_l4     = dplyr::lag(eco_ed_raw,1), # economist excess deaths
       eco_ed_l5     = dplyr::lag(eco_ed_raw,2), # economist excess deaths
+      eco_edg       = dplyr::lag(eco_ed_raw,0)/dplyr::lag(estimated_daily_excess_deaths_per_100k,1)-1,
+      eco_edg_l1    = dplyr::lag(eco_edg,1),
+      eco_edg_l2    = dplyr::lag(eco_edg,2),
+      eco_edg_l3    = dplyr::lag(eco_edg,3),
+      eco_edg_l4    = dplyr::lag(eco_edg,4),
+      centre_R_l1   = dplyr::lag(centre_R,1),
+      centre_R_l2   = dplyr::lag(centre_R,2),
+      centre_R_l3   = dplyr::lag(centre_R,3),
+      centre_R_l4   = dplyr::lag(centre_R,4),
       log_R_l1      = dplyr::lag(log_R,1),
       log_R_l2      = dplyr::lag(log_R,2),
       log_R_l3      = dplyr::lag(log_R,3),
@@ -104,8 +117,8 @@ create_weekly_dataset <- function(file_name='/data/covid_eu_data.rds')
       fd_H3         = dplyr::lag(H3_combined_numeric - dplyr::lag(H3_combined_numeric,1),1),
       fd_H6         = dplyr::lag(H6_combined_numeric - dplyr::lag(H6_combined_numeric,1),1),
       fd_H8         = dplyr::lag(H8_combined_numeric - dplyr::lag(H8_combined_numeric,1),1),
-      fd_workplaces = dplyr::lag(workplaces - dplyr::lag(workplaces,1),1),
-      fd_transit    = dplyr::lag((`transit stations` - dplyr::lag(`transit stations`,1))/100,1),
+      fd_workplaces = workplaces - dplyr::lag(workplaces,1),
+      fd_transit    = (`transit stations` - dplyr::lag(`transit stations`,1))/100,
       fd_transit_l1 = dplyr::lag(fd_transit,1),
       fd_transit_l2 = dplyr::lag(fd_transit,2),
       fd_transit_l3 = dplyr::lag(fd_transit,3),
