@@ -172,62 +172,64 @@ brm_predict <- function(brm_obj, new_data_in)
               predictions           = pred ))
 }
 
-# helper function to get VAR coefficients
-brm_extract_Amat_from_draws <- function(draw,n_resp,p,resp_names)  
+brm_extract_Amat <- function(brm_obj,n_resp,p,get="Estimate")   # "Estimate", "l-95% CI" or "u-95% CI"
 {
-  df       <- draw
-  df$head  <- 0
-  df       <- df %>% dplyr::select(head,colnames(draw))
-  coef_tbl <- df %>%
-    gather(key = var_name, value = value, 2:ncol(df)) %>% 
-    spread(key = names(df)[1],value = 'value')
-  
-  colnames(coef_tbl) <-c("term","value") 
+  coefs         <- summary(brm_obj)$fixed           # Get coefficients to construct A_i matrices
+  coef_tbl      <- as_tibble(coefs)
+  coef_tbl$term <- rownames(coefs)
   
   A_mat         <- array(NA,dim=c(n_resp,n_resp,p))
   
   for(i in 1:p)
   {
     tmp <- coef_tbl %>% filter(str_detect(term, paste0("_l",i)))
-    tmp$response <- sapply(str_split(tmp$term,"_"),function(x)x[2] )
-    tmp$variable <- sapply(str_split(tmp$term,"_"),function(x)paste0(x[3],x[4]) )
-    A_mat[,,i]   <- tmp %>% dplyr::select(value, response, variable) %>% 
-      pivot_wider(names_from = variable,values_from = value) %>% 
-      dplyr::select(c("response",resp_names)) %>%
-      arrange(match(response, resp_names)) %>%
+    tmp$response <- sapply(str_split(tmp$term,"_"),function(x)x[1] )
+    tmp$variable <- sapply(str_split(tmp$term,"_"),function(x)x[3] )
+    A_mat[,,i]   <- tmp %>% dplyr::select(!!sym(get), response, variable) %>% 
+      pivot_wider(names_from = variable,values_from = !!sym(get)) %>%
       dplyr::select(-response) %>% as.matrix() %>% t()
   }
   
   return(A_mat)
 }
 
-# Compute Impulse Response Functions
-compute_irf_from_draws <- function(brm_obj,p,lags=6,plot_labels=NA)
+# helper function to compute PCA loadings for NPIs
+compute_NPI_PCA <- function(covid_data,NPI_variables,NPI_schema)
+{
+  pca.data           <- covid_data %>% dplyr::select(NPI_variables)
+  colnames(pca.data) <- NPI_schema %>% filter(data_label %in% NPI_variables) %>% pull(Codebook)
+  pca.res            <- prcomp(na.omit(pca.data),scale=TRUE)
+  NPI_PCA1           <- as.matrix(pca.data) %*% as.vector(pca.res$rotation[,1])
+  
+  return(list(PCA1=NPI_PCA1,pca.res=pca.res))
+}
+
+compute_irf_mcmc <- function(brm_obj,p,lags=6,plot_labels=NA,facet_scales = "fixed",level_order = c("logR","ecoed","fdGDP","fdtransit"))
 {
   rescov     <- VarCorr(brm_obj)                    # Extract Variance and Correlation Components 
   cov        <- as_tibble(rescov$residual__$cov)    # Get residual covariance terms
   cov_matrix <- cov %>% dplyr::select(colnames(cov)[str_starts(colnames(cov),"Estimate")]) %>% as.matrix()
-  cov_mat_u  <- cov %>% dplyr::select(colnames(cov)[str_starts(colnames(cov),"Q97.5")]) %>% as.matrix()
-  cov_mat_l  <- cov %>% dplyr::select(colnames(cov)[str_starts(colnames(cov),"Q2.5")]) %>% as.matrix()
   
   resp_names <- str_replace( colnames(cov_matrix), "Estimate.", "" )
   n_resp     <- length(resp_names)                  # number of response variables
   
   P_matrix   <- t(chol(cov_matrix))                 # Cholesky decomposition (lower triangular) of covariance matrix
-  P_mat_u    <- t(chol(cov_mat_u))                 
-  P_mat_l    <- t(chol(cov_mat_l)) 
   
-  draws      <- bind_rows(lapply(as_draws(brm_obj),as_tibble))   
+  A <- brm_extract_Amat(brm_obj,n_resp,p,get="Estimate")
+  
+  A_mcmc <- array(NA,dim=c(n_resp,n_resp,p,1000))
+  for(i in 1:n_resp)
+  {
+    for(j in 1:p)
+      A_mcmc[i,,j,] <- t(mvrnorm(n=1000,mu=as.vector(A[i,,j]),Sigma=as.matrix(cov_matrix)))
+  }
   
   oirf_tbl   <- as_tibble()
   girf_tbl   <- as_tibble()
   
-  samples    <- round(runif(1000,1,8000)) 
-  
-  for(k in samples)#1:dim(draws)[1])
+  for(k in 1:1000)
   {
-    draw <- draws[k,]
-    A_mat <- brm_extract_Amat_from_draws(draw,n_resp,p,resp_names)
+    A_mat    <- array(A_mcmc[,,,k],dim=c(n_resp,n_resp,p))
     
     phi      <- array(NA,dim=c(n_resp,n_resp,lags+1)) # Construction of the phi matrices up to lags 
     phi[,,1] <- diag(n_resp)  # this is phi 0
@@ -243,28 +245,18 @@ compute_irf_from_draws <- function(brm_obj,p,lags=6,plot_labels=NA)
     }
     
     sigma_jj     <- diag(cov_matrix) 
-    sigma_jj_u   <- diag(cov_mat_u) 
-    sigma_jj_l   <- diag(cov_mat_l) 
     
     oirf_calced   <- array(NA,dim=c(n_resp,n_resp,lags+1))  # Construct orthogonal impulse response
     girf_calced   <- array(NA,dim=c(n_resp,n_resp,lags+1))
-    oirf_calced_u <- array(NA,dim=c(n_resp,n_resp,lags+1))  # Construct orthogonal impulse response
-    girf_calced_u <- array(NA,dim=c(n_resp,n_resp,lags+1))
-    oirf_calced_l <- array(NA,dim=c(n_resp,n_resp,lags+1))  # Construct orthogonal impulse response
-    girf_calced_l <- array(NA,dim=c(n_resp,n_resp,lags+1))
     
     for(i in 1:(lags+1))
     {
       oirf_calced[,,i]   <- phi[,,i] %*% P_matrix
       girf_calced[,,i]   <- phi[,,i] %*% diag(sigma_jj^(-1/2)) %*% cov_matrix
-      oirf_calced_u[,,i] <- phi[,,i] %*% P_mat_u 
-      girf_calced_u[,,i] <- phi[,,i] %*% diag(sigma_jj_u^(-1/2)) %*% cov_mat_u 
-      oirf_calced_l[,,i] <- phi[,,i] %*% P_mat_l 
-      girf_calced_l[,,i] <- phi[,,i] %*% diag(sigma_jj_l^(-1/2)) %*% cov_mat_l
     }
     
-    colnames(oirf_calced) <- colnames(girf_calced) <- colnames(oirf_calced_u) <- colnames(girf_calced_u) <- colnames(oirf_calced_l) <- colnames(girf_calced_l) <- resp_names
-    rownames(oirf_calced) <- rownames(girf_calced) <- rownames(oirf_calced_u) <- rownames(girf_calced_u) <- rownames(oirf_calced_l) <- rownames(girf_calced_l) <- resp_names
+    colnames(oirf_calced) <- colnames(girf_calced) <- resp_names
+    rownames(oirf_calced) <- rownames(girf_calced) <- resp_names
     
     for(i in 1:(lags+1))                                         # put oirf into a tibble so that we can plot easily
     {
@@ -272,74 +264,44 @@ compute_irf_from_draws <- function(brm_obj,p,lags=6,plot_labels=NA)
       tmp$variable <- resp_names
       tmp$lag      <- i
       tmp$draw     <- k
-      tmp$pctle    <- "pct_0.5"
-      oirf_tbl     <- bind_rows(oirf_tbl,tmp) 
-      
-      tmp          <- as_tibble(oirf_calced_u[,,i])
-      tmp$variable <- resp_names
-      tmp$lag      <- i
-      tmp$draw     <- k
-      tmp$pctle    <- "pct_0.975"
-      oirf_tbl     <- bind_rows(oirf_tbl,tmp) 
-      
-      tmp          <- as_tibble(oirf_calced_l[,,i])
-      tmp$variable <- resp_names
-      tmp$lag      <- i
-      tmp$draw     <- k
-      tmp$pctle    <- "pct_0.025"
       oirf_tbl     <- bind_rows(oirf_tbl,tmp) 
       
       tmp          <- as_tibble(girf_calced[,,i])
       tmp$variable <- resp_names
       tmp$lag      <- i
       tmp$draw     <- k
-      tmp$pctle    <- "pct_0.5"
       girf_tbl     <- bind_rows(girf_tbl,tmp) 
-      
-      tmp          <- as_tibble(girf_calced_u[,,i])
-      tmp$variable <- resp_names
-      tmp$lag      <- i
-      tmp$draw     <- k
-      tmp$pctle    <- "pct_0.975"
-      girf_tbl     <- bind_rows(girf_tbl,tmp) 
-      
-      tmp          <- as_tibble(girf_calced_l[,,i])
-      tmp$variable <- resp_names
-      tmp$lag      <- i
-      tmp$draw     <- k
-      tmp$pctle    <- "pct_0.025"
-      girf_tbl     <- bind_rows(girf_tbl,tmp)
     }
   }
   
   if(length(resp_names)==3)
   {
-    tt <- girf_tbl %>% filter(pctle=="pct_0.5") %>% group_by(variable,lag) %>% summarise(logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[3])),pctle="pct_0.5")
-    tt <- bind_rows(tt, girf_tbl %>% filter(pctle=="pct_0.025") %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[3]),0.025),pctle="pct_0.025"))
-    tt <- bind_rows(tt, girf_tbl %>% filter(pctle=="pct_0.975") %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[3]),0.975),pctle="pct_0.975"))
+    tt <- girf_tbl %>% group_by(variable,lag) %>% summarise(logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[3])),pctle="pct_0.5")
+    tt <- bind_rows(tt, girf_tbl %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[3]),0.025),pctle="pct_0.025"))
+    tt <- bind_rows(tt, girf_tbl %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[3]),0.975),pctle="pct_0.975"))
   } else if(length(resp_names)==4)
   {
-    tt <- girf_tbl %>% filter(pctle=="pct_0.5") %>% group_by(variable,lag) %>% summarise(logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[3])),fdtransit=median(!!sym(resp_names[4])),pctle="pct_0.5")
-    tt <- bind_rows(tt, girf_tbl %>% filter(pctle=="pct_0.025") %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[3]),0.025),fdtransit=quantile(!!sym(resp_names[4]),0.025),pctle="pct_0.025"))
-    tt <- bind_rows(tt, girf_tbl %>% filter(pctle=="pct_0.975") %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[3]),0.975),fdtransit=quantile(!!sym(resp_names[4]),0.975),pctle="pct_0.975"))
+    tt <- girf_tbl %>% group_by(variable,lag) %>% summarise(logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[3])),fdtransit=median(!!sym(resp_names[4])),pctle="pct_0.5")
+    tt <- bind_rows(tt, girf_tbl %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[3]),0.025),fdtransit=quantile(!!sym(resp_names[4]),0.025),pctle="pct_0.025"))
+    tt <- bind_rows(tt, girf_tbl %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[3]),0.975),fdtransit=quantile(!!sym(resp_names[4]),0.975),pctle="pct_0.975"))
   }
   
   girf      <- tt %>% pivot_longer(-c(lag,variable,pctle),names_to = "response", values_to = "gir") 
   
-  girf$variable <- as.factor(as.character(girf$variable))
-  girf$response <- as.factor(as.character(girf$response))
+  girf$variable <- factor(as.character(girf$variable),levels = level_order)
+  girf$response <- factor(as.character(girf$response),levels = level_order)
   
   if(length(plot_labels)==1)
   {
-    levels(girf$variable) <- c("log~ED", "Delta~GDP","Delta~Transit", "log~R")
-    levels(girf$response) <- c("log~ED", "Delta~GDP","Delta~Transit", "log~R")
+    levels(girf$variable) <- c("log~R","log~ED","Delta~GDP","Delta~Transit")
+    levels(girf$response) <- c("log~R","log~ED","Delta~GDP","Delta~Transit")
   } else {
     levels(girf$variable) <- plot_labels
     levels(girf$response) <- plot_labels
   }
   
   girf_plot <- girf %>% group_by(response,variable,pctle) %>% ggplot(aes(x=lag,y=gir,col=pctle,linetype=pctle)) + geom_line() + 
-    facet_grid(response~variable, labeller = label_parsed) + 
+    facet_grid(response~variable, labeller = label_parsed, scales = facet_scales ) + 
     theme(legend.position = "none" ) +
     scale_color_manual(values=c(pct_0.025="red",pct_0.5="black",pct_0.975="red")) +
     scale_linetype_manual(values = c(pct_0.025="dashed",pct_0.5="solid",pct_0.975="dashed")) +
@@ -347,47 +309,36 @@ compute_irf_from_draws <- function(brm_obj,p,lags=6,plot_labels=NA)
   
   if(length(resp_names)==3)
   {
-    tto <- oirf_tbl %>% filter(pctle=="pct_0.5") %>% group_by(variable,lag) %>% summarise(logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[3])),pctle="pct_0.5")
-    tto <- bind_rows(tto, oirf_tbl %>% filter(pctle=="pct_0.025") %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[3]),0.025),pctle="pct_0.025"))
-    tto <- bind_rows(tto, oirf_tbl %>% filter(pctle=="pct_0.975") %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[3]),0.975),pctle="pct_0.975"))
+    tto <- oirf_tbl %>% group_by(variable,lag) %>% summarise(logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[3])),pctle="pct_0.5")
+    tto <- bind_rows(tto, oirf_tbl %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[3]),0.025),pctle="pct_0.025"))
+    tto <- bind_rows(tto, oirf_tbl%>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[3]),0.975),pctle="pct_0.975"))
   } else if(length(resp_names)==4)
   {
-    tto <- oirf_tbl %>% filter(pctle=="pct_0.5") %>% group_by(variable,lag) %>% summarise(logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[3])),fdtransit=median(!!sym(resp_names[4])),pctle="pct_0.5")
-    tto <- bind_rows(tto, oirf_tbl %>% filter(pctle=="pct_0.025") %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[3]),0.025),fdtransit=quantile(!!sym(resp_names[4]),0.025),pctle="pct_0.025"))
-    tto <- bind_rows(tto, oirf_tbl %>% filter(pctle=="pct_0.975") %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[3]),0.975),fdtransit=quantile(!!sym(resp_names[4]),0.975),pctle="pct_0.975"))
+    tto <- oirf_tbl %>% group_by(variable,lag) %>% summarise(logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[3])),fdtransit=median(!!sym(resp_names[4])),pctle="pct_0.5")
+    tto <- bind_rows(tto, oirf_tbl %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[3]),0.025),fdtransit=quantile(!!sym(resp_names[4]),0.025),pctle="pct_0.025"))
+    tto <- bind_rows(tto, oirf_tbl %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[3]),0.975),fdtransit=quantile(!!sym(resp_names[4]),0.975),pctle="pct_0.975"))
   }
   
   oirf      <- tto %>% pivot_longer(-c(lag,variable,pctle),names_to = "response", values_to = "oir") 
   
-  oirf$variable <- as.factor(as.character(oirf$variable))
-  oirf$response <- as.factor(as.character(oirf$response))
+  oirf$variable <- factor(as.character(oirf$variable),levels = level_order)
+  oirf$response <- factor(as.character(oirf$response),levels = level_order)
   
   if(length(plot_labels)==1)
   {
-    levels(oirf$variable) <- c("Excess~Deaths", "Delta~GDP","Delta~Transit", "log~R")
-    levels(oirf$response) <- c("Excess~Deaths", "Delta~GDP","Delta~Transit", "log~R")
+    levels(oirf$variable) <- c("log~R","log~ED","Delta~GDP","Delta~Transit")
+    levels(oirf$response) <- c("log~R","log~ED","Delta~GDP","Delta~Transit")
   } else {
     levels(oirf$variable) <- plot_labels
     levels(oirf$response) <- plot_labels
   }
   
   oirf_plot <- oirf %>% group_by(response,variable,pctle) %>% ggplot(aes(x=lag,y=oir,col=pctle,linetype=pctle)) + geom_line() + 
-    facet_grid(response~variable, labeller = label_parsed) + 
+    facet_grid(response~variable, labeller = label_parsed, scales = facet_scales ) + 
     scale_color_manual(values=c(pct_0.025="red",pct_0.5="black",pct_0.975="red")) +
     scale_linetype_manual(values = c(pct_0.025="dashed",pct_0.5="solid",pct_0.975="dashed")) + 
     ylab("Orthogonolised Impulse Response") + xlab("Lags")
   
   return(list(oirf_plot=oirf_plot,oirf_tbl=oirf,
               girf_plot=girf_plot,girf_tbl=girf))
-}
-
-# helper function to compute PCA loadings for NPIs
-compute_NPI_PCA <- function(covid_data,NPI_variables,NPI_schema)
-{
-  pca.data           <- covid_data %>% dplyr::select(NPI_variables)
-  colnames(pca.data) <- NPI_schema %>% filter(data_label %in% NPI_variables) %>% pull(Codebook)
-  pca.res            <- prcomp(na.omit(pca.data),scale=TRUE)
-  NPI_PCA1           <- as.matrix(pca.data) %*% as.vector(pca.res$rotation[,1])
-  
-  return(list(PCA1=NPI_PCA1,pca.res=pca.res))
 }
