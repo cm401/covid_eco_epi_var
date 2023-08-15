@@ -65,13 +65,15 @@ brm_VAR <- function(
   if(str_length(panel_id))
   {
     bf_string <- paste0("mvbind(",paste(response_variables,collapse=","),") ~ ", 
-                        VAR_components, "+", 
-                        paste(exogenous_variables,collapse="+"),
+                        VAR_components,
+                        if(length(exogenous_variables)) "+", 
+                        if(length(exogenous_variables)) paste(exogenous_variables,collapse="+"),
                         " + (1|",panel_id,")")
   } else {
     bf_string <- paste0("mvbind(",paste(response_variables,collapse=","),") ~ ", 
-                        VAR_components, "+", 
-                        paste(exogenous_variables,collapse="+"))
+                        VAR_components,
+                        if(length(exogenous_variables)) "+", 
+                        if(length(exogenous_variables)) paste(exogenous_variables,collapse="+"))
   }
   
   brm_mv <- bf(formula(bf_string)) + set_rescor(TRUE)  
@@ -172,6 +174,80 @@ brm_predict <- function(brm_obj, new_data_in)
               predictions           = pred ))
 }
 
+brm_NPI_sensitivity <- function(
+    data,      
+    start_date              = as.Date("2020-01-01"),
+    end_date                = as.Date("2022-01-01"),
+    response_variables      = c( "log_R","eco_ed","fd_GDP","fd_transit"),
+    exogenous_variables     = c( "fd_C1", "lvl_C1L_lag", "fd_C2", "lvl_C2L_lag", "fd_C4", "lvl_C4L_lag", "fd_C5", "lvl_C5L_lag", "fd_C8", "lvl_C8L_lag", 
+                                 "fd_H2", "lvl_H2L_lag", "fd_H6", "lvl_H6L_lag", "fd_H8", "lvl_H8L_lag", "fd_E1", "lvl_E1L_lag" ),
+    p                       = 1,
+    priors                  = c(prior(normal(0,1),class=b,resp=fdGDP),
+                                prior(normal(0,1),class=b,resp=ecoed),
+                                prior(normal(0,1),class=b,resp=fdtransit),
+                                prior(normal(0,1),class=b,resp=logR),
+                                prior(cauchy(0,2),class=sd,resp=fdGDP),
+                                prior(cauchy(0,2),class=sd,resp=ecoed),
+                                prior(cauchy(0,2),class=sd,resp=fdtransit),
+                                prior(cauchy(0,2),class=sd,resp=logR)),
+    panel_id                = "CountryName",
+    iterations              = 4000,
+    no_population_intercept = TRUE,
+    control                 = list(adapt_delta = 0.9, step_size = 0.01, max_treedepth = 10),
+    interaction_term        = "vaccination_doses_per_person + WT_variant + Alpha_variant + Delta_variant + Omicron_variant",
+    save_to_file            = NA      #provide file name here
+)
+{
+  data <- data %>% filter(Date>=start_date & Date<end_date) #enforce start & end date
+  
+  VAR_components <- c()
+  VAR_eqns       <- c()
+  
+  for(i in 1:p)
+    VAR_components <- c(VAR_components, unlist(lapply(response_variables,paste0, paste0("_l",i))))
+  
+  for(i in 1:length(response_variables))
+  {
+    VAR_eqns[i] <- paste(response_variables[i], "~" )  
+    VAR_comp_in <- VAR_components[i]
+    
+    if(no_population_intercept)
+    {
+      VAR_comp_in <- paste0( "0 + ", paste(VAR_comp_in,collapse="+"))
+    } else {
+      VAR_comp_in <- paste(VAR_comp_in,collapse="+")
+    }
+    
+    VAR_eqns[i] <- paste(VAR_eqns[i],VAR_comp_in, "+", paste(exogenous_variables,collapse="+"), "+" ,interaction_term,
+                         " + (1|",panel_id,")")
+  }
+  
+  brm_mv <- mvbf(VAR_eqns[1],VAR_eqns[2],VAR_eqns[3],VAR_eqns[4],rescor = FALSE)  
+  
+  models    <- brm(brm_mv, data= data, prior=priors, iter = iterations, control = control ) 
+  stan_code <- stancode(models)
+  
+  models    <- add_criterion(models,"waic")
+  models    <- add_criterion(models,"loo")
+  
+  model_draws <- bind_rows(lapply(as_draws(models),as_tibble)) %>% mutate(period = "full") %>%
+    pivot_longer(-period, names_to = "variable", values_to = "coef")
+  model_draws$resp <- sapply(str_split(model_draws$variable,"_"),function(x)if( x[2] %in% str_replace(response_variables,"_","") )x[2] else NA)
+  model_draws$NPI  <- sapply(str_split(model_draws$variable,"_"),function(x)if( length(x)>3 & is_character(x[4]) & (str_length(x[4])==2|str_length(x[4])==3) & x[4]!="GDP") x[4] else NA )
+  
+  hypothesis_model <- as_tibble(hypothesis(models, paste(rownames(fixef(models)), "= 0"),class='b',alpha=0.05)$hypothesis)
+  
+  output <- list(models           = models,
+                 stan_code        = stan_code,
+                 model_hypothesis = hypothesis_model,
+                 model_draws      = model_draws,
+                 data_used        = data)
+  
+  if(!is.na(save_to_file)) saveRDS(output,paste0(here(),"/data/model_outputs/",save_to_file,".rds"))
+  
+  return(output)
+}
+
 brm_extract_Amat <- function(brm_obj,n_resp,p,get="Estimate")   # "Estimate", "l-95% CI" or "u-95% CI"
 {
   coefs         <- summary(brm_obj)$fixed           # Get coefficients to construct A_i matrices
@@ -224,8 +300,8 @@ compute_irf_mcmc <- function(brm_obj,p,lags=6,plot_labels=NA,facet_scales = "fix
       A_mcmc[i,,j,] <- t(mvrnorm(n=1000,mu=as.vector(A[i,,j]),Sigma=as.matrix(cov_matrix)))
   }
   
-  oirf_tbl   <- as_tibble()
-  girf_tbl   <- as_tibble()
+  oirf_tbl   <- as_tibble(x=NULL)
+  girf_tbl   <- as_tibble(x=NULL)
   
   for(k in 1:1000)
   {
@@ -284,7 +360,13 @@ compute_irf_mcmc <- function(brm_obj,p,lags=6,plot_labels=NA,facet_scales = "fix
     tt <- girf_tbl %>% group_by(variable,lag) %>% summarise(logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[3])),fdtransit=median(!!sym(resp_names[4])),pctle="pct_0.5")
     tt <- bind_rows(tt, girf_tbl %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[3]),0.025),fdtransit=quantile(!!sym(resp_names[4]),0.025),pctle="pct_0.025"))
     tt <- bind_rows(tt, girf_tbl %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[3]),0.975),fdtransit=quantile(!!sym(resp_names[4]),0.975),pctle="pct_0.975"))
+  } else if(length(resp_names)==5)
+  {
+    tt <- girf_tbl %>% group_by(variable,lag) %>% summarise(fdNPI=median(!!sym(resp_names[3])),logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[4])),fdtransit=median(!!sym(resp_names[5])),pctle="pct_0.5")
+    tt <- bind_rows(tt, girf_tbl %>% group_by(variable,lag) %>% summarise(fdNPI=quantile(!!sym(resp_names[3]),0.025),logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[4]),0.025),fdtransit=quantile(!!sym(resp_names[5]),0.025),pctle="pct_0.025"))
+    tt <- bind_rows(tt, girf_tbl %>% group_by(variable,lag) %>% summarise(fdNPI=quantile(!!sym(resp_names[3]),0.975),logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[4]),0.975),fdtransit=quantile(!!sym(resp_names[5]),0.975),pctle="pct_0.975"))
   }
+  
   
   girf      <- tt %>% pivot_longer(-c(lag,variable,pctle),names_to = "response", values_to = "gir") 
   
@@ -317,6 +399,11 @@ compute_irf_mcmc <- function(brm_obj,p,lags=6,plot_labels=NA,facet_scales = "fix
     tto <- oirf_tbl %>% group_by(variable,lag) %>% summarise(logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[3])),fdtransit=median(!!sym(resp_names[4])),pctle="pct_0.5")
     tto <- bind_rows(tto, oirf_tbl %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[3]),0.025),fdtransit=quantile(!!sym(resp_names[4]),0.025),pctle="pct_0.025"))
     tto <- bind_rows(tto, oirf_tbl %>% group_by(variable,lag) %>% summarise(logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[3]),0.975),fdtransit=quantile(!!sym(resp_names[4]),0.975),pctle="pct_0.975"))
+  } else if(length(resp_names)==5)
+  {
+    tto <- oirf_tbl %>% group_by(variable,lag) %>% summarise(fdNPI=median(!!sym(resp_names[3])),logR=median(!!sym(resp_names[1])),ecoed=median(!!sym(resp_names[2])),fdGDP=median(!!sym(resp_names[4])),fdtransit=median(!!sym(resp_names[5])),pctle="pct_0.5")
+    tto <- bind_rows(tto, oirf_tbl %>% group_by(variable,lag) %>% summarise(fdNPI=quantile(!!sym(resp_names[3]),0.025),logR=quantile(!!sym(resp_names[1]),0.025),ecoed=quantile(!!sym(resp_names[2]),0.025),fdGDP=quantile(!!sym(resp_names[4]),0.025),fdtransit=quantile(!!sym(resp_names[5]),0.025),pctle="pct_0.025"))
+    tto <- bind_rows(tto, oirf_tbl %>% group_by(variable,lag) %>% summarise(fdNPI=quantile(!!sym(resp_names[3]),0.975),logR=quantile(!!sym(resp_names[1]),0.975),ecoed=quantile(!!sym(resp_names[2]),0.975),fdGDP=quantile(!!sym(resp_names[4]),0.975),fdtransit=quantile(!!sym(resp_names[5]),0.975),pctle="pct_0.975"))
   }
   
   oirf      <- tto %>% pivot_longer(-c(lag,variable,pctle),names_to = "response", values_to = "oir") 
